@@ -1,0 +1,848 @@
+package com.test.grocery;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+import android.Manifest;
+import android.app.ProgressDialog;
+import android.content.ContentValues;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.location.Address;
+import android.location.Geocoder;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.MediaStore;
+import android.text.TextUtils;
+import android.util.Patterns;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
+import com.google.firebase.auth.AuthResult;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+
+public class RegisterUserActivity extends AppCompatActivity implements LocationListener {
+
+    private ImageButton BackBt, GpsBt;
+    private ImageView ProfileIv;
+    private EditText NameEt, PhoneEt, CountryEt, StateEt, CityEt, AddressEt,
+            EmailEt, PasswordEt, ConfirmPasswordEt;
+    private Button RegisterBt;
+    private TextView RegisterSellerTv;
+
+    //permission constants
+    private static final int LOCATION_REQUEST_CODE = 100;
+    private static final int CAMERA_REQUEST_CODE = 200;
+    private static final int STORAGE_REQUEST_CODE = 300;
+
+    //Image pick constants
+    private static final int IMAGE_PICK_GALLERY_CODE = 400;
+    private static final int IMAGE_PICK_CAMERA_CODE = 500;
+
+    //permission arrays
+    private String[] locationPermissions;
+    private String[] cameraPermissions;
+    private String[] storagePermissions;
+
+    //image picked uri
+    private Uri image_uri;
+
+    private double latitude, longitude;
+
+    private LocationManager locationManager;
+
+    private FirebaseAuth firebaseAuth;
+    private ProgressDialog progressDialog;
+
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate( savedInstanceState );
+        setContentView( R.layout.activity_register_user );
+
+        //init ui views
+
+        BackBt =  findViewById( R.id.BackBt );
+        GpsBt = findViewById( R.id.GpsBt );
+        ProfileIv = findViewById( R.id.ProfileIv );
+        NameEt = findViewById( R.id.NameEt );
+        PhoneEt= findViewById( R.id.PhoneEt );
+        CountryEt = findViewById( R.id.CountryEt );
+        StateEt = findViewById( R.id.StateEt );
+        CityEt = findViewById( R.id.CityEt );
+        AddressEt = findViewById( R.id.AddressEt );
+        EmailEt = findViewById( R.id.EmailEt);
+        PasswordEt = findViewById( R.id.PasswordEt );
+        ConfirmPasswordEt = findViewById( R.id.ConfirmPasswordEt );
+        RegisterBt = findViewById( R.id.RegisterBt);
+        RegisterSellerTv = findViewById( R.id.RegisterSellerTv );
+
+
+        //init permissions array
+        locationPermissions = new String[]{Manifest.permission.ACCESS_FINE_LOCATION};
+        cameraPermissions = new String[]{Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE};
+        storagePermissions = new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE};
+
+        firebaseAuth = FirebaseAuth.getInstance();
+        progressDialog = new ProgressDialog( this );
+        progressDialog.setTitle( "Please wait" );
+        progressDialog.setCanceledOnTouchOutside( false );
+
+
+
+
+        BackBt.setOnClickListener( new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onBackPressed();
+            }
+        } );
+
+        GpsBt.setOnClickListener( new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                //detect current location
+                if (checkLocationPermission()){
+                    //already allowed
+                    detectLocation();
+                }
+                else{
+                    //not allowed, request
+                    requestLocationPermission();
+                }
+            }
+        } );
+
+        ProfileIv.setOnClickListener( new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                //pick image
+                showImagePickDialog();
+            }
+        } );
+
+        RegisterBt.setOnClickListener( new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                //register user
+                inputData();
+            }
+        } );
+
+        RegisterSellerTv.setOnClickListener( new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                //open register seller activity
+                startActivity( new Intent( RegisterUserActivity.this, RegisterSellerActivity.class ) );
+            }
+        } );
+
+    }
+
+
+    private String FullName, PhoneNumber, Country, State, City, Address, Email, Password, ConfirmPassword;
+
+    private void inputData() {
+        //input data
+        FullName = NameEt.getText().toString().trim();
+        PhoneNumber = PhoneEt.getText().toString().trim();
+        Country = CountryEt.getText().toString().trim();
+        State = StateEt.getText().toString().trim();
+        City = CityEt.getText().toString().trim();
+        Address = AddressEt.getText().toString().trim();
+        Email = EmailEt.getText().toString().trim();
+        Password = PasswordEt.getText().toString().trim();
+        ConfirmPassword = ConfirmPasswordEt.getText().toString().trim();
+        //validate data
+        if (TextUtils.isEmpty( FullName )){
+            Toast.makeText( this, "Enter Name..", Toast.LENGTH_SHORT ).show();
+            return;
+        }
+
+        if (TextUtils.isEmpty( PhoneNumber )){
+            Toast.makeText( this, "Enter Phone Number..", Toast.LENGTH_SHORT ).show();
+            return;
+        }
+        if (latitude == 0.0 || longitude== 0.0){
+            Toast.makeText( this, "Please click GPS button to detect location..", Toast.LENGTH_SHORT ).show();
+            return;
+        }
+        if (!Patterns.EMAIL_ADDRESS.matcher( Email ).matches()){
+            Toast.makeText( this, "Invalid Email ID..", Toast.LENGTH_SHORT ).show();
+            return;
+        }
+        if (Password.length()<6){
+            Toast.makeText( this, "Password must be atleast 6 characters long..", Toast.LENGTH_SHORT ).show();
+            return;
+        }
+        if (!Password.equals( ConfirmPassword )){
+            Toast.makeText( this, "Password does't match..", Toast.LENGTH_SHORT ).show();
+            return;
+        }
+
+        createAccount();
+    }
+
+    private void createAccount() {
+        progressDialog.setMessage( "Creating Account.." );
+        progressDialog.show();
+
+        //create account
+        firebaseAuth.createUserWithEmailAndPassword( Email, Password )
+                .addOnSuccessListener( new OnSuccessListener<AuthResult>() {
+                    @Override
+                    public void onSuccess(AuthResult authResult) {
+                        //account created
+                        saverFirebaseData();
+                    }
+                } )
+                .addOnFailureListener( new OnFailureListener() {
+                    @Override
+                    public void onFailure(@NonNull Exception e) {
+                        //failed creating account
+                        progressDialog.dismiss();
+                        Toast.makeText( RegisterUserActivity.this, ""+e.getMessage(), Toast.LENGTH_SHORT ).show();
+                    }
+                } );
+    }
+
+    private void saverFirebaseData() {
+        progressDialog.setMessage( "Saving Account Info.." );
+
+        final String timestamp = ""+System.currentTimeMillis();
+
+        if (image_uri == null){
+            //save info without image
+
+            //setup data to save
+            HashMap<String, Object> hashMap = new HashMap<>(  );
+            hashMap.put( "uid",""+ firebaseAuth.getUid() );
+            hashMap.put( "email",""+ Email );
+            hashMap.put( "name",""+ FullName );
+            hashMap.put( "phone",""+ PhoneNumber );
+            hashMap.put( "country",""+ Country );
+            hashMap.put( "state",""+ State );
+            hashMap.put( "city",""+ City );
+            hashMap.put( "address",""+ Address );
+            hashMap.put( "latitute",""+ latitude );
+            hashMap.put( "longitude",""+ longitude);
+            hashMap.put( "timestamp",""+ timestamp );
+            hashMap.put( "accountType","User");
+            hashMap.put( "online","true" );
+            hashMap.put( "profileImage","" );
+
+            //save to db
+            DatabaseReference ref = FirebaseDatabase.getInstance().getReference("Users");
+            ref.child( firebaseAuth.getUid() ).setValue( hashMap )
+                    .addOnSuccessListener( new OnSuccessListener<Void>() {
+                        @Override
+                        public void onSuccess(Void aVoid) {
+                            //db updated
+                            progressDialog.dismiss();
+                            startActivity( new Intent( RegisterUserActivity.this, UserActivity.class  ) );
+                            finish();
+                        }
+                    } )
+                    .addOnFailureListener( new OnFailureListener() {
+                        @Override
+                        public void onFailure(@NonNull Exception e) {
+                            //failed updating db
+                            progressDialog.dismiss();
+                            startActivity( new Intent( RegisterUserActivity.this, UserActivity.class  ) );
+                            finish();
+                        }
+                    } );
+        }
+        else {
+            //save info with image
+
+            //name and path of image
+            String filePathAndName = "profile_images/" + "" + firebaseAuth.getUid();
+            //upload image
+            StorageReference storageReference = FirebaseStorage.getInstance().getReference(filePathAndName);
+            storageReference.putFile( image_uri )
+                    .addOnSuccessListener( new OnSuccessListener<UploadTask.TaskSnapshot>() {
+                        @Override
+                        public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
+                            //get uri of uploaded image
+                            Task<Uri> uriTask = taskSnapshot.getStorage().getDownloadUrl();
+                            while (!uriTask.isSuccessful());
+                            Uri downloadImageUri = uriTask.getResult();
+
+                            if (uriTask.isSuccessful()){
+
+                                //setup data to save
+                                HashMap<String, Object> hashMap = new HashMap<>(  );
+                                hashMap.put( "uid",""+ firebaseAuth.getUid() );
+                                hashMap.put( "email",""+ Email );
+                                hashMap.put( "name",""+ FullName );
+                                hashMap.put( "phone",""+ PhoneNumber );
+                                hashMap.put( "country",""+ Country );
+                                hashMap.put( "state",""+ State );
+                                hashMap.put( "city",""+ City );
+                                hashMap.put( "address",""+ Address );
+                                hashMap.put( "latitute",""+ latitude );
+                                hashMap.put( "longitude",""+ longitude);
+                                hashMap.put( "timestamp",""+ timestamp );
+                                hashMap.put( "accountType","User");
+                                hashMap.put( "online","true" );
+                                hashMap.put( "profileImage","" + downloadImageUri ); //url of uploaded image
+
+                                //save to db
+                                DatabaseReference ref = FirebaseDatabase.getInstance().getReference("Users");
+                                ref.child( firebaseAuth.getUid() ).setValue( hashMap )
+                                        .addOnSuccessListener( new OnSuccessListener<Void>() {
+                                            @Override
+                                            public void onSuccess(Void aVoid) {
+                                                //db updated
+                                                progressDialog.dismiss();
+                                                startActivity( new Intent( RegisterUserActivity.this, UserActivity.class  ) );
+                                                finish();
+                                            }
+                                        } )
+                                        .addOnFailureListener( new OnFailureListener() {
+                                            @Override
+                                            public void onFailure(@NonNull Exception e) {
+                                                //failed updating db
+                                                progressDialog.dismiss();
+                                                startActivity( new Intent( RegisterUserActivity.this, UserActivity.class  ) );
+                                                finish();
+                                            }
+                                        } );
+                            }
+                        }
+                    } )
+                    .addOnFailureListener( new OnFailureListener() {
+                        @Override
+                        public void onFailure(@NonNull Exception e) {
+
+                            progressDialog.dismiss();
+                            Toast.makeText( RegisterUserActivity.this, ""+e.getMessage(), Toast.LENGTH_SHORT ).show();
+                        }
+                    } );
+
+        }
+    }
+
+
+    private void showImagePickDialog() {
+        //options to display in dialog
+        String[] options = {"Camera", "Gallery"};
+        //dialog
+        AlertDialog.Builder builder = new AlertDialog.Builder( this );
+        builder.setTitle( "Pick Image" )
+                .setItems( options, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        //handle clicks
+                        if (which == 0){
+                            //camera clicked
+                            if (checkCameraPermission()){
+                                //camera permissions allowed
+                                pickFromCamera();
+                            }
+                            else {
+                                //not allowed, request
+                                requestCameraPermission();
+                            }
+                        }
+                        else {
+                            //gallery clicked
+                            if (checkStoragePermission()){
+                                //storage permission allowed
+                                pickFromGallery();
+
+                            }
+                            else {
+                                //not allowed, request
+                                requestStoragePermission();
+                            }
+                        }
+                    }
+                } )
+                .show();
+    }
+
+    private void pickFromGallery(){
+        Intent intent = new Intent( Intent.ACTION_PICK);
+        intent.setType( "image/*" );
+        startActivityForResult( intent, IMAGE_PICK_GALLERY_CODE );
+    }
+
+    private void pickFromCamera(){
+        ContentValues contentValues = new ContentValues(  );
+        contentValues.put( MediaStore.Images.Media.TITLE,"Temp_Image Title" );
+        contentValues.put( MediaStore.Images.Media.DESCRIPTION,"Temp_Image Description" );
+
+        image_uri = getContentResolver().insert( MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues );
+
+        Intent intent = new Intent( MediaStore.ACTION_IMAGE_CAPTURE );
+        intent.putExtra( MediaStore.EXTRA_OUTPUT, image_uri );
+        startActivityForResult( intent, IMAGE_PICK_CAMERA_CODE );
+    }
+
+    private void detectLocation() {
+        Toast.makeText( this, "Please wait..", Toast.LENGTH_SHORT ).show();
+
+        locationManager = (LocationManager)getSystemService( Context.LOCATION_SERVICE );
+        locationManager.requestLocationUpdates( LocationManager.GPS_PROVIDER, 0, 0,this );
+
+
+    }
+
+    private void findAddress() {
+        //find address, country, state, city
+        Geocoder geocoder;
+        List<Address> addresses;
+        geocoder = new Geocoder( this, Locale.getDefault() );
+
+        try {
+            addresses = geocoder.getFromLocation( latitude, longitude, 1 );
+
+            String address = addresses.get( 0 ).getAddressLine( 0 ); //complete address
+            String city = addresses.get( 0 ).getLocality();
+            String state = addresses.get( 0 ).getAdminArea();
+            String country = addresses.get( 0 ).getCountryName();
+
+            //set addresses
+            CountryEt.setText( country );
+            StateEt.setText( state );
+            CityEt.setText( city );
+            AddressEt.setText( address );
+
+        }
+        catch (Exception e){
+            Toast.makeText( this, ""+e.getMessage(), Toast.LENGTH_SHORT ).show();
+        }
+    }
+
+    private boolean checkLocationPermission(){
+        boolean result = ContextCompat.checkSelfPermission( this,
+                Manifest.permission.ACCESS_FINE_LOCATION) ==
+                (PackageManager.PERMISSION_GRANTED);
+        return result;
+    }
+
+    private void requestLocationPermission(){
+        ActivityCompat.requestPermissions( this, locationPermissions, LOCATION_REQUEST_CODE );
+    }
+
+    private boolean checkStoragePermission(){
+        boolean result = ContextCompat.checkSelfPermission( this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                (PackageManager.PERMISSION_GRANTED);
+        return result;
+    }
+
+    private void requestStoragePermission(){
+        ActivityCompat.requestPermissions( this, storagePermissions, STORAGE_REQUEST_CODE );
+    }
+
+    private boolean checkCameraPermission(){
+        boolean result = ContextCompat.checkSelfPermission( this,
+                Manifest.permission.CAMERA) ==
+                (PackageManager.PERMISSION_GRANTED);
+        boolean result1 = ContextCompat.checkSelfPermission( this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                (PackageManager.PERMISSION_GRANTED);
+
+        return result && result1;
+    }
+
+    private void requestCameraPermission(){
+        ActivityCompat.requestPermissions( this, cameraPermissions, CAMERA_REQUEST_CODE );
+    }
+
+
+
+
+    @Override
+    public void onLocationChanged(Location location) {
+        //location detected
+        latitude = location.getLatitude();
+        longitude = location.getLongitude();
+
+        findAddress();
+    }
+
+
+    @Override
+    public void onStatusChanged(String provider, int status, Bundle extras) {
+
+    }
+
+    @Override
+    public void onProviderEnabled(String provider) {
+
+    }
+
+    @Override
+    public void onProviderDisabled(String provider) {
+        //gps/location disabled
+        Toast.makeText( this, "Please turn on location..", Toast.LENGTH_SHORT ).show();
+    }
+
+
+
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        switch (requestCode){
+
+            case LOCATION_REQUEST_CODE:{
+                if (grantResults.length>0){
+                    boolean locationAccepted = grantResults[0] == PackageManager.PERMISSION_GRANTED;
+                    if (locationAccepted){
+                        //permission allowed
+                        detectLocation();
+
+                    }
+                    else {
+                        //permission denied
+                        Toast.makeText( this, "Location permission is necessary..", Toast.LENGTH_SHORT ).show();
+
+                    }
+                }
+            }
+            break;
+
+            case CAMERA_REQUEST_CODE:{
+                if (grantResults.length>0){
+                    boolean cameraAccepted = grantResults[0] == PackageManager.PERMISSION_GRANTED;
+                    boolean storageAccepted = grantResults[1] == PackageManager.PERMISSION_GRANTED;
+                    if (cameraAccepted && storageAccepted){
+                        //permission allowed
+                        pickFromCamera();
+
+                    }
+                    else {
+                        //permission denied
+                        Toast.makeText( this, "Camera permissions are necessary..", Toast.LENGTH_SHORT ).show();
+
+                    }
+                }
+            }
+            break;
+
+            case STORAGE_REQUEST_CODE:{
+                if (grantResults.length>0){
+                    boolean storageAccepted = grantResults[0] == PackageManager.PERMISSION_GRANTED;
+                    if (storageAccepted){
+                        //permission allowed
+                        pickFromGallery();
+
+                    }
+                    else {
+                        //permission denied
+                        Toast.makeText( this, "Storage permission is necessary..", Toast.LENGTH_SHORT ).show();
+
+                    }
+                }
+            }
+            break;
+        }
+
+        super.onRequestPermissionsResult( requestCode, permissions, grantResults );
+
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        if (resultCode == RESULT_OK){
+
+            if (requestCode == IMAGE_PICK_GALLERY_CODE){
+
+                //get picked image
+                image_uri = data.getData();
+                //set to imageView
+                ProfileIv.setImageURI( image_uri );
+            }
+            else if (requestCode == IMAGE_PICK_CAMERA_CODE){
+
+                //set to imageView
+                ProfileIv.setImageURI( image_uri );
+            }
+        }
+        super.onActivityResult( requestCode, resultCode, data );
+    }
+
+}
+ register xml
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/white"
+    tools:context=".RegisterUserActivity">
+
+
+    <!--tool bar-->
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="80dp"
+        android:background="@drawable/shape_rec01"
+        android:padding="10dp">
+
+        <ImageButton
+            android:id="@+id/BackBt"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/ic_back_white"
+            android:background="@null"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerHorizontal="true"
+            android:text="Register User"
+            android:textColor="@android:color/white"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/GpsBt"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/ic_gps_white"
+            android:layout_alignParentEnd="true"
+            android:background="@null"/>
+
+    </RelativeLayout>
+
+    <ImageView
+        android:id="@+id/keyimage"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="60dp"
+        android:layout_marginBottom="20dp"
+        android:background="@drawable/shape_circle01"
+        android:padding="5dp"
+        android:src="@drawable/ic_key_white" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@+id/keyimage">
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <de.hdodenhof.circleimageview.CircleImageView
+                xmlns:app="http://schemas.android.com/apk/res-auto"
+                android:id="@+id/ProfileIv"
+                android:layout_width="96dp"
+                android:layout_height="96dp"
+                android:layout_centerHorizontal="true"
+                android:src="@drawable/ic_person_gray"
+                app:civ_border_color="#002e63"
+                app:civ_border_width="1dp"
+                />
+
+
+            <EditText
+                android:id="@+id/NameEt"
+                android:layout_below="@+id/ProfileIv"
+                android:hint="Full Name"
+                android:padding="10dp"
+                android:drawableStart="@drawable/ic_person_gray"
+                android:drawablePadding="5dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="15dp"
+                android:inputType="textPersonName|textCapWords"
+                android:background="@drawable/shapere_rec02"/>
+
+
+
+            <EditText
+                android:id="@+id/PhoneEt"
+                android:layout_below="@+id/NameEt"
+                android:hint="Phone"
+                android:padding="10dp"
+                android:drawableStart="@drawable/ic_phone_gray"
+                android:drawablePadding="5dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="15dp"
+                android:inputType="phone"
+                android:background="@drawable/shapere_rec02"/>
+
+            <LinearLayout
+                android:id="@+id/AddressLi"
+                android:layout_margin="10dp"
+                android:layout_below="@+id/PhoneEt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/CountryEt"
+                    android:layout_below="@+id/PhoneEt"
+                    android:hint="Country"
+                    android:padding="10dp"
+                    android:drawableStart="@drawable/ic_location_gray"
+                    android:drawablePadding="5dp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="5dp"
+                    android:inputType="textPostalAddress"
+                    android:layout_weight="1"
+                    android:background="@drawable/shapere_rec02"/>
+
+                <EditText
+                    android:id="@+id/StateEt"
+                    android:layout_below="@+id/PhoneEt"
+                    android:hint="State"
+                    android:padding="10dp"
+                    android:drawableStart="@drawable/ic_location_gray"
+                    android:drawablePadding="5dp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="5dp"
+                    android:inputType="textPostalAddress"
+                    android:layout_weight="1"
+                    android:background="@drawable/shapere_rec02"/>
+
+                <EditText
+                    android:id="@+id/CityEt"
+                    android:layout_below="@+id/PhoneEt"
+                    android:hint="City"
+                    android:padding="10dp"
+                    android:drawableStart="@drawable/ic_location_gray"
+                    android:drawablePadding="5dp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="5dp"
+                    android:inputType="textPostalAddress"
+                    android:layout_weight="1"
+                    android:background="@drawable/shapere_rec02"/>
+            </LinearLayout>
+
+
+            <EditText
+                android:id="@+id/AddressEt"
+                android:layout_below="@+id/AddressLi"
+                android:hint="Address"
+                android:padding="10dp"
+                android:drawableStart="@drawable/ic_location_gray"
+                android:drawablePadding="5dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="15dp"
+                android:inputType="textPostalAddress|textMultiLine"
+                android:background="@drawable/shapere_rec02"/>
+
+
+            <EditText
+                android:id="@+id/EmailEt"
+                android:layout_below="@+id/AddressEt"
+                android:hint="Email"
+                android:padding="10dp"
+                android:drawableStart="@drawable/ic_mail_gray"
+                android:drawablePadding="5dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="15dp"
+                android:inputType="textEmailAddress"
+                android:background="@drawable/shapere_rec02"/>
+
+
+            <EditText
+                android:id="@+id/PasswordEt"
+                android:layout_below="@+id/EmailEt"
+                android:hint="Password"
+                android:padding="10dp"
+                android:drawableStart="@drawable/ic_lock_gray"
+                android:drawablePadding="5dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="15dp"
+                android:inputType="textPassword"
+                android:background="@drawable/shapere_rec02"/>
+
+            <EditText
+                android:id="@+id/ConfirmPasswordEt"
+                android:layout_below="@+id/PasswordEt"
+                android:hint="Confirm Password"
+                android:padding="10dp"
+                android:drawableStart="@drawable/ic_lock_gray"
+                android:drawablePadding="5dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="15dp"
+                android:inputType="textPassword"
+                android:background="@drawable/shapere_rec02"/>
+
+
+
+            <Button
+                android:id="@+id/RegisterBt"
+                android:text="Register"
+                android:textStyle="bold"
+                android:layout_marginTop="10dp"
+                android:minWidth="100dp"
+                android:layout_centerHorizontal="true"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#002e63"
+                android:textColor="@android:color/white"
+                android:layout_below="@id/ConfirmPasswordEt"/>
+
+            <TextView
+                android:id="@+id/RegisterSellerTv"
+                android:layout_below="@+id/RegisterBt"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:text="Are you a Seller?Register on Seller"
+                android:textColor="#002e63"
+                android:layout_centerHorizontal="true"
+                android:layout_alignParentBottom="true"/>
+
+
+
+        </RelativeLayout>
+
+
+
+
+    </ScrollView>
+
+
+
+
+
+
+</RelativeLayout>
